@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-v3
 pragma solidity ^0.8.4;
 
+import "forge-std/Test.sol";
+
 import {ERC20} from "solmate/tokens/ERC20.sol";
 import {SafeCastLib} from "solmate/utils/SafeCastLib.sol";
 import {FixedPointMathLib} from "solmate/utils/FixedPointMathLib.sol";
@@ -43,6 +45,9 @@ contract UniV3LpOracle {
     /// address(0) on non-Ethereum networks.
     FeedRegistryInterface public immutable chainlink;
 
+    address internal immutable WETH;
+    address internal immutable WBTC;
+
     /// -----------------------------------------------------------------------
     /// Errors
     /// -----------------------------------------------------------------------
@@ -54,8 +59,10 @@ contract UniV3LpOracle {
     /// Constructor
     /// -----------------------------------------------------------------------
 
-    constructor(FeedRegistryInterface chainlink_) {
+    constructor(FeedRegistryInterface chainlink_, address WETH_, address WBTC_) {
         chainlink = chainlink_;
+        WETH = WETH_;
+        WBTC = WBTC_;
     }
 
     /// -----------------------------------------------------------------------
@@ -87,8 +94,14 @@ contract UniV3LpOracle {
         address token0 = pool.token0();
         address token1 = pool.token1();
 
-        AggregatorV2V3Interface feed0 = chainlink.getFeed(token0, Denominations.USD);
-        AggregatorV2V3Interface feed1 = chainlink.getFeed(token1, Denominations.USD);
+        AggregatorV2V3Interface feed0;
+        AggregatorV2V3Interface feed1;
+        try chainlink.getFeed(_transformToken(token0), Denominations.USD) returns (AggregatorV2V3Interface f) {
+            feed0 = f;
+        } catch {}
+        try chainlink.getFeed(_transformToken(token1), Denominations.USD) returns (AggregatorV2V3Interface f) {
+            feed1 = f;
+        } catch {}
 
         uint256 token0Base = 10 ** uint256(ERC20(token0).decimals());
         uint256 token1Base = 10 ** uint256(ERC20(token1).decimals());
@@ -112,7 +125,8 @@ contract UniV3LpOracle {
     /// @notice Computes the USD value of a Uniswap V3 liquidity position.
     /// @dev This function is meant for maximum gas efficiency: many parameters that could've been fetched
     /// via external calls are instead input arguments. Furthermore, this function must be used on non-Ethereum
-    /// chains since there's no Feed Registry available.
+    /// chains since there's no Feed Registry available. If the wrong values are given for input arguments, the result
+    /// is undefined.
     /// @param pool The Uniswap V3 pool
     /// @param token0 token0 of the Uniswap pool
     /// @param token1 token1 of the Uniswap pool
@@ -186,13 +200,13 @@ contract UniV3LpOracle {
                 // both tokens have chainlink price
 
                 // fetch prices from chainlink
-                price0USD = _getPriceUSDFromFeed(feed0, chainlinkPriceMaxAgeSecs);
-                price1USD = _getPriceUSDFromFeed(feed1, chainlinkPriceMaxAgeSecs);
+                price0USD = _getPriceUSDFromFeed(feed0, token0, chainlinkPriceMaxAgeSecs);
+                price1USD = _getPriceUSDFromFeed(feed1, token1, chainlinkPriceMaxAgeSecs);
             } else if (address(feed0) != address(0) && address(feed1) == address(0)) {
                 // token0 has chainlink price
 
                 // fetch prices from chainlink
-                price0USD = _getPriceUSDFromFeed(feed0, chainlinkPriceMaxAgeSecs);
+                price0USD = _getPriceUSDFromFeed(feed0, token0, chainlinkPriceMaxAgeSecs);
 
                 // compute price1USD using Uniswap v3 TWAP oracle
                 (int24 arithmeticMeanTick,) = OracleLibrary.consult(address(pool), uniV3OracleSecondsAgo);
@@ -203,7 +217,7 @@ contract UniV3LpOracle {
                 // token1 has chainlink price
 
                 // fetch prices from chainlink
-                price1USD = _getPriceUSDFromFeed(feed1, chainlinkPriceMaxAgeSecs);
+                price1USD = _getPriceUSDFromFeed(feed1, token1, chainlinkPriceMaxAgeSecs);
 
                 // compute price0USD using Uniswap v3 TWAP oracle
                 (int24 arithmeticMeanTick,) = OracleLibrary.consult(address(pool), uniV3OracleSecondsAgo);
@@ -230,14 +244,23 @@ contract UniV3LpOracle {
             + amount1.mulDivDown(price1USD, PRICE_BASE).mulDivDown(BASE, token1Base);
     }
 
-    function _getPriceUSDFromFeed(AggregatorV2V3Interface feed, uint256 chainlinkPriceMaxAgeSecs)
+    function _getPriceUSDFromFeed(AggregatorV2V3Interface feed, address token, uint256 chainlinkPriceMaxAgeSecs)
         internal
         view
         returns (uint256 priceUSD)
     {
         // fetch USD price of tokens from chainlink
         // prices use 8 decimals
-        (, int256 priceUSDInt,, uint256 updatedAt,) = feed.latestRoundData();
+        int256 priceUSDInt;
+        uint256 updatedAt;
+        try feed.latestRoundData() returns (uint80, int256 p, uint256, uint256 u, uint80) {
+            priceUSDInt = p;
+            updatedAt = u;
+        } catch {
+            // might be access controlled aggregator
+            // use FeedRegistry instead to bypass access control
+            (, priceUSDInt,, updatedAt,) = chainlink.latestRoundData(_transformToken(token), Denominations.USD);
+        }
 
         // revert if the result is stale
         if (block.timestamp - updatedAt > chainlinkPriceMaxAgeSecs) revert UniV3LpOracle__ChainlinkPriceTooOld();
@@ -250,5 +273,16 @@ contract UniV3LpOracle {
         //              = sqrt(price0USD / price1USD) * 2**96
         //              = sqrt(price0USD * 2**96 / price1USD) * 2**48
         return (((price0USD << 96) / price1USD).sqrt() << 48).safeCastTo160();
+    }
+
+    function _transformToken(address token) internal view returns (address) {
+        // transforms WETH and WBTC to addresses accepted by chainlink
+        if (token == WETH) {
+            return Denominations.ETH;
+        } else if (token == WBTC) {
+            return Denominations.BTC;
+        } else {
+            return token;
+        }
     }
 }
