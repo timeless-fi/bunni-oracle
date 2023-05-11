@@ -13,10 +13,12 @@ contract DeployScript is CREATE3Script {
         vm.startBroadcast(deployerPrivateKey);
 
         address chainlink = vm.envAddress("CHAINLINK");
+        address WETH = vm.envAddress("WETH");
+        address WBTC = vm.envAddress("WBTC");
         c = UniV3LpOracle(
             create3.deploy(
                 getCreate3ContractSalt("UniV3LpOracle"),
-                bytes.concat(type(UniV3LpOracle).creationCode, abi.encode(chainlink))
+                bytes.concat(type(UniV3LpOracle).creationCode, abi.encode(chainlink, WETH, WBTC))
             )
         );
 
