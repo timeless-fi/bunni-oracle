@@ -1,19 +1,13 @@
-# Foundry template
+# UniV3LpOracle
 
-This is a template for a Foundry project.
+Uniswap V3 liquidity position price oracle that wses a combination of Chainlink price oracles and Uniswap V3 built-in TWAP oracles to compute the value of a Uniswap V3 liquidity position without being vulnerable to flashloan manipulation attacks.
 
 ## Installation
-
-To install with [DappTools](https://github.com/dapphub/dapptools):
-
-```
-dapp install [user]/[repo]
-```
 
 To install with [Foundry](https://github.com/gakonst/foundry):
 
 ```
-forge install [user]/[repo]
+forge install timeless-fi/univ3-lp-oracle
 ```
 
 ## Local development
@@ -35,7 +29,7 @@ forge build
 ### Testing
 
 ```
-forge test
+forge test -f mainnet
 ```
 
 ### Contract deployment

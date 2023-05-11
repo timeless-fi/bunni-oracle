@@ -3,7 +3,7 @@ pragma solidity ^0.8.4;
 
 import "forge-std/Test.sol";
 
-contract ContractTest is Test {
+contract UniV3LpOracleTest is Test {
     function setUp() public {}
 
     function testExample() public {
