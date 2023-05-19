@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-v3
 pragma solidity ^0.8.4;
 
+import {IBunniToken} from "bunni/src/interfaces/IBunniToken.sol";
+
 import "forge-std/Test.sol";
 
 import {ERC20} from "solmate/tokens/ERC20.sol";
@@ -47,6 +49,10 @@ contract UniV3LpOracle {
 
     address internal immutable WETH;
     address internal immutable WBTC;
+    address internal immutable USDC;
+    address internal immutable USDT;
+    address internal immutable DAI;
+    address internal immutable FRAX;
 
     /// -----------------------------------------------------------------------
     /// Errors
@@ -59,10 +65,22 @@ contract UniV3LpOracle {
     /// Constructor
     /// -----------------------------------------------------------------------
 
-    constructor(FeedRegistryInterface chainlink_, address WETH_, address WBTC_) {
+    constructor(
+        FeedRegistryInterface chainlink_,
+        address WETH_,
+        address WBTC_,
+        address USDC_,
+        address USDT_,
+        address DAI_,
+        address FRAX_
+    ) {
         chainlink = chainlink_;
         WETH = WETH_;
         WBTC = WBTC_;
+        USDC = USDC_;
+        USDT = USDT_;
+        DAI = DAI_;
+        FRAX = FRAX_;
     }
 
     /// -----------------------------------------------------------------------
@@ -103,8 +121,113 @@ contract UniV3LpOracle {
             feed1 = f;
         } catch {}
 
-        uint256 token0Base = 10 ** uint256(ERC20(token0).decimals());
-        uint256 token1Base = 10 ** uint256(ERC20(token1).decimals());
+        uint256 token0Base = _getTokenBase(token0);
+        uint256 token1Base = _getTokenBase(token1);
+
+        return _quoteUSD(
+            pool,
+            token0,
+            token1,
+            token0Base,
+            token1Base,
+            tickLower,
+            tickUpper,
+            liquidity,
+            uniV3OracleSecondsAgo,
+            chainlinkPriceMaxAgeSecs,
+            feed0,
+            feed1
+        );
+    }
+
+    /// @notice Computes the USD value of a Uniswap V3 liquidity position.
+    /// @dev This function is meant for ease of use: the number of input parameters is minimized
+    /// and we make external contract calls to obtain the token & price feed addresses. Only works
+    /// on Ethereum since the Feed Registry is only available there. Lets the user provide whether
+    /// a chainlink price feed exists for each token to save gas (~5k) in the case where only one token
+    /// has a feed
+    /// @param pool The Uniswap V3 pool
+    /// @param tickLower The lower tick of the liquidity position
+    /// @param tickUpper The upper tick of the liquidity position
+    /// @param liquidity The liquidity value of the position
+    /// @param feed0Exists Whether a chainlink price feed exists for token0 of the pool
+    /// @param feed1Exists Whether a chainlink price feed exists for token1 of the pool
+    /// @param uniV3OracleSecondsAgo The size of the TWAP window used by the Uniswap V3 TWAP oracle in seconds.
+    /// Ignored if both token0 and token1 have chainlink price feeds. The call reverts if the TWAP oracle
+    /// doesn't have observations old enough in the past to support the window size.
+    /// @param chainlinkPriceMaxAgeSecs The maximum age of the results returned by chainlink in seconds.
+    /// The call reverts if the result is older than this value.
+    /// @return valueUSD The value of the liquidity position in USD, 18 decimals
+    function quoteUSD(
+        IUniswapV3Pool pool,
+        int24 tickLower,
+        int24 tickUpper,
+        uint128 liquidity,
+        bool feed0Exists,
+        bool feed1Exists,
+        uint32 uniV3OracleSecondsAgo,
+        uint256 chainlinkPriceMaxAgeSecs
+    ) external view returns (uint256 valueUSD) {
+        address token0 = pool.token0();
+        address token1 = pool.token1();
+
+        AggregatorV2V3Interface feed0 = feed0Exists
+            ? chainlink.getFeed(_transformToken(token0), Denominations.USD)
+            : AggregatorV2V3Interface(address(0));
+        AggregatorV2V3Interface feed1 = feed1Exists
+            ? chainlink.getFeed(_transformToken(token1), Denominations.USD)
+            : AggregatorV2V3Interface(address(0));
+
+        uint256 token0Base = _getTokenBase(token0);
+        uint256 token1Base = _getTokenBase(token1);
+
+        return _quoteUSD(
+            pool,
+            token0,
+            token1,
+            token0Base,
+            token1Base,
+            tickLower,
+            tickUpper,
+            liquidity,
+            uniV3OracleSecondsAgo,
+            chainlinkPriceMaxAgeSecs,
+            feed0,
+            feed1
+        );
+    }
+
+    /// @notice Computes the USD value of a Uniswap V3 liquidity position.
+    /// @dev This function is meant for ease of use: the number of input parameters is minimized
+    /// and we make external contract calls to obtain the token & price feed addresses. Used on non-Ethereum
+    /// chains since there's no Feed Registry available.
+    /// @param pool The Uniswap V3 pool
+    /// @param tickLower The lower tick of the liquidity position
+    /// @param tickUpper The upper tick of the liquidity position
+    /// @param liquidity The liquidity value of the position
+    /// @param uniV3OracleSecondsAgo The size of the TWAP window used by the Uniswap V3 TWAP oracle in seconds.
+    /// Ignored if both token0 and token1 have chainlink price feeds. The call reverts if the TWAP oracle
+    /// doesn't have observations old enough in the past to support the window size.
+    /// @param chainlinkPriceMaxAgeSecs The maximum age of the results returned by chainlink in seconds.
+    /// The call reverts if the result is older than this value.
+    /// @param feed0 The Chainlink price feed for token0. Use address(0) if not available.
+    /// @param feed1 The Chainlink price feed for token1. Use address(0) if not available.
+    /// @return valueUSD The value of the liquidity position in USD, 18 decimals
+    function quoteUSD(
+        IUniswapV3Pool pool,
+        int24 tickLower,
+        int24 tickUpper,
+        uint128 liquidity,
+        uint32 uniV3OracleSecondsAgo,
+        uint256 chainlinkPriceMaxAgeSecs,
+        AggregatorV2V3Interface feed0,
+        AggregatorV2V3Interface feed1
+    ) external view returns (uint256 valueUSD) {
+        address token0 = pool.token0();
+        address token1 = pool.token1();
+
+        uint256 token0Base = _getTokenBase(token0);
+        uint256 token1Base = _getTokenBase(token1);
 
         return _quoteUSD(
             pool,
@@ -124,7 +247,7 @@ contract UniV3LpOracle {
 
     /// @notice Computes the USD value of a Uniswap V3 liquidity position.
     /// @dev This function is meant for maximum gas efficiency: many parameters that could've been fetched
-    /// via external calls are instead input arguments. Furthermore, this function must be used on non-Ethereum
+    /// via external calls are instead input arguments. Used on non-Ethereum
     /// chains since there's no Feed Registry available. If the wrong values are given for input arguments, the result
     /// is undefined.
     /// @param pool The Uniswap V3 pool
@@ -173,6 +296,199 @@ contract UniV3LpOracle {
         );
     }
 
+    /// @notice Computes the USD price of a Bunni LP token.
+    /// @dev This function is meant for ease of use: the number of input parameters is minimized
+    /// and we make external contract calls to obtain the token & price feed addresses. Only works
+    /// on Ethereum since the Feed Registry is only available there.
+    /// @param bunniToken The Bunni LP token
+    /// @param uniV3OracleSecondsAgo The size of the TWAP window used by the Uniswap V3 TWAP oracle in seconds.
+    /// Ignored if both token0 and token1 have chainlink price feeds. The call reverts if the TWAP oracle
+    /// doesn't have observations old enough in the past to support the window size.
+    /// @param chainlinkPriceMaxAgeSecs The maximum age of the results returned by chainlink in seconds.
+    /// The call reverts if the result is older than this value.
+    /// @return priceUSD The price of the Bunni LP token in USD, 18 decimals
+    function bunniTokenPriceUSD(IBunniToken bunniToken, uint32 uniV3OracleSecondsAgo, uint256 chainlinkPriceMaxAgeSecs)
+        external
+        view
+        returns (uint256 priceUSD)
+    {
+        IUniswapV3Pool pool = bunniToken.pool();
+        address token0 = pool.token0();
+        address token1 = pool.token1();
+
+        AggregatorV2V3Interface feed0;
+        AggregatorV2V3Interface feed1;
+        try chainlink.getFeed(_transformToken(token0), Denominations.USD) returns (AggregatorV2V3Interface f) {
+            feed0 = f;
+        } catch {}
+        try chainlink.getFeed(_transformToken(token1), Denominations.USD) returns (AggregatorV2V3Interface f) {
+            feed1 = f;
+        } catch {}
+
+        int24 tickLower = bunniToken.tickLower();
+        int24 tickUpper = bunniToken.tickUpper();
+        uint256 token0Base = _getTokenBase(token0);
+        uint256 token1Base = _getTokenBase(token1);
+
+        return _bunniTokenPriceUSD(
+            bunniToken,
+            pool,
+            token0,
+            token1,
+            token0Base,
+            token1Base,
+            tickLower,
+            tickUpper,
+            uniV3OracleSecondsAgo,
+            chainlinkPriceMaxAgeSecs,
+            feed0,
+            feed1
+        );
+    }
+
+    /// @notice Computes the USD price of a Bunni LP token.
+    /// @dev This function is meant for ease of use: the number of input parameters is minimized
+    /// and we make external contract calls to obtain the token & price feed addresses. Only works
+    /// on Ethereum since the Feed Registry is only available there. Lets the user provide whether
+    /// a chainlink price feed exists for each token to save gas (~5k) in the case where only one token
+    /// has a feed
+    /// @param bunniToken The Bunni LP token
+    /// @param feed0Exists Whether a chainlink price feed exists for token0 of the pool
+    /// @param feed1Exists Whether a chainlink price feed exists for token1 of the pool
+    /// @param uniV3OracleSecondsAgo The size of the TWAP window used by the Uniswap V3 TWAP oracle in seconds.
+    /// Ignored if both token0 and token1 have chainlink price feeds. The call reverts if the TWAP oracle
+    /// doesn't have observations old enough in the past to support the window size.
+    /// @param chainlinkPriceMaxAgeSecs The maximum age of the results returned by chainlink in seconds.
+    /// The call reverts if the result is older than this value.
+    /// @return priceUSD The price of the Bunni LP token in USD, 18 decimals
+    function bunniTokenPriceUSD(
+        IBunniToken bunniToken,
+        bool feed0Exists,
+        bool feed1Exists,
+        uint32 uniV3OracleSecondsAgo,
+        uint256 chainlinkPriceMaxAgeSecs
+    ) external view returns (uint256 priceUSD) {
+        IUniswapV3Pool pool = bunniToken.pool();
+        address token0 = pool.token0();
+        address token1 = pool.token1();
+
+        AggregatorV2V3Interface feed0 = feed0Exists
+            ? chainlink.getFeed(_transformToken(token0), Denominations.USD)
+            : AggregatorV2V3Interface(address(0));
+        AggregatorV2V3Interface feed1 = feed1Exists
+            ? chainlink.getFeed(_transformToken(token1), Denominations.USD)
+            : AggregatorV2V3Interface(address(0));
+
+        int24 tickLower = bunniToken.tickLower();
+        int24 tickUpper = bunniToken.tickUpper();
+        uint256 token0Base = _getTokenBase(token0);
+        uint256 token1Base = _getTokenBase(token1);
+
+        return _bunniTokenPriceUSD(
+            bunniToken,
+            pool,
+            token0,
+            token1,
+            token0Base,
+            token1Base,
+            tickLower,
+            tickUpper,
+            uniV3OracleSecondsAgo,
+            chainlinkPriceMaxAgeSecs,
+            feed0,
+            feed1
+        );
+    }
+
+    /// @notice Computes the USD price of a Bunni LP token.
+    /// @dev This function is meant for ease of use: the number of input parameters is minimized
+    /// and we make external contract calls to obtain the token & price feed addresses. Used on non-Ethereum
+    /// chains since there's no Feed Registry available.
+    /// @param bunniToken The Bunni LP token
+    /// @param uniV3OracleSecondsAgo The size of the TWAP window used by the Uniswap V3 TWAP oracle in seconds.
+    /// Ignored if both token0 and token1 have chainlink price feeds. The call reverts if the TWAP oracle
+    /// doesn't have observations old enough in the past to support the window size.
+    /// @param chainlinkPriceMaxAgeSecs The maximum age of the results returned by chainlink in seconds.
+    /// The call reverts if the result is older than this value.
+    /// @param feed0 The Chainlink price feed for token0. Use address(0) if not available.
+    /// @param feed1 The Chainlink price feed for token1. Use address(0) if not available.
+    /// @return priceUSD The price of the Bunni LP token in USD, 18 decimals
+    function bunniTokenPriceUSD(
+        IBunniToken bunniToken,
+        uint32 uniV3OracleSecondsAgo,
+        uint256 chainlinkPriceMaxAgeSecs,
+        AggregatorV2V3Interface feed0,
+        AggregatorV2V3Interface feed1
+    ) external view returns (uint256 priceUSD) {
+        IUniswapV3Pool pool = bunniToken.pool();
+        address token0 = pool.token0();
+        address token1 = pool.token1();
+
+        int24 tickLower = bunniToken.tickLower();
+        int24 tickUpper = bunniToken.tickUpper();
+        uint256 token0Base = _getTokenBase(token0);
+        uint256 token1Base = _getTokenBase(token1);
+
+        return _bunniTokenPriceUSD(
+            bunniToken,
+            pool,
+            token0,
+            token1,
+            token0Base,
+            token1Base,
+            tickLower,
+            tickUpper,
+            uniV3OracleSecondsAgo,
+            chainlinkPriceMaxAgeSecs,
+            feed0,
+            feed1
+        );
+    }
+
+    /// @notice Computes the USD price of a Bunni LP token.
+    /// @dev This function is meant for maximum gas efficiency: many parameters that could've been fetched
+    /// via external calls are instead input arguments. Used on non-Ethereum
+    /// chains since there's no Feed Registry available. If the wrong values are given for input arguments, the result
+    /// is undefined.
+    /// @param bunniToken The Bunni LP token
+    /// @param uniV3OracleSecondsAgo The size of the TWAP window used by the Uniswap V3 TWAP oracle in seconds.
+    /// Ignored if both token0 and token1 have chainlink price feeds. The call reverts if the TWAP oracle
+    /// doesn't have observations old enough in the past to support the window size.
+    /// @param chainlinkPriceMaxAgeSecs The maximum age of the results returned by chainlink in seconds.
+    /// The call reverts if the result is older than this value.
+    /// @param feed0 The Chainlink price feed for token0. Use address(0) if not available.
+    /// @param feed1 The Chainlink price feed for token1. Use address(0) if not available.
+    /// @return priceUSD The price of the Bunni LP token in USD, 18 decimals
+    function bunniTokenPriceUSD(
+        IBunniToken bunniToken,
+        IUniswapV3Pool pool,
+        address token0,
+        address token1,
+        uint256 token0Base,
+        uint256 token1Base,
+        int24 tickLower,
+        int24 tickUpper,
+        uint32 uniV3OracleSecondsAgo,
+        uint256 chainlinkPriceMaxAgeSecs,
+        AggregatorV2V3Interface feed0,
+        AggregatorV2V3Interface feed1
+    ) external view returns (uint256 priceUSD) {
+        return _bunniTokenPriceUSD(
+            bunniToken,
+            pool,
+            token0,
+            token1,
+            token0Base,
+            token1Base,
+            tickLower,
+            tickUpper,
+            uniV3OracleSecondsAgo,
+            chainlinkPriceMaxAgeSecs,
+            feed0,
+            feed1
+        );
+    }
+
     /// -----------------------------------------------------------------------
     /// Internal functions
     /// -----------------------------------------------------------------------
@@ -202,7 +518,8 @@ contract UniV3LpOracle {
                 // fetch prices from chainlink
                 price0USD = _getPriceUSDFromFeed(feed0, token0, chainlinkPriceMaxAgeSecs);
                 price1USD = _getPriceUSDFromFeed(feed1, token1, chainlinkPriceMaxAgeSecs);
-            } else if (address(feed0) != address(0) && address(feed1) == address(0)) {
+            } else if (uint160(address(feed0)) | uint160(address(feed1)) == uint160(address(feed0))) {
+                // feed0 != 0, feed1 == 0
                 // token0 has chainlink price
 
                 // fetch prices from chainlink
@@ -213,7 +530,8 @@ contract UniV3LpOracle {
                 uint256 quoteAmount =
                     OracleLibrary.getQuoteAtTick(arithmeticMeanTick, token1Base.safeCastTo128(), token1, token0); // price of token1 in token0
                 price1USD = quoteAmount.mulDivDown(price0USD, token0Base);
-            } else if (address(feed0) == address(0) && address(feed1) != address(0)) {
+            } else if (uint160(address(feed0)) | uint160(address(feed1)) == uint160(address(feed1))) {
+                // feed0 == 0, feed1 != 0
                 // token1 has chainlink price
 
                 // fetch prices from chainlink
@@ -244,6 +562,52 @@ contract UniV3LpOracle {
             + amount1.mulDivDown(price1USD, PRICE_BASE).mulDivDown(BASE, token1Base);
     }
 
+    function _bunniTokenPriceUSD(
+        IBunniToken bunniToken,
+        IUniswapV3Pool pool,
+        address token0,
+        address token1,
+        uint256 token0Base,
+        uint256 token1Base,
+        int24 tickLower,
+        int24 tickUpper,
+        uint32 uniV3OracleSecondsAgo,
+        uint256 chainlinkPriceMaxAgeSecs,
+        AggregatorV2V3Interface feed0,
+        AggregatorV2V3Interface feed1
+    ) internal view returns (uint256 priceUSD) {
+        uint128 liquidity;
+        {
+            uint256 existingShareSupply = bunniToken.totalSupply();
+            if (existingShareSupply == 0) {
+                liquidity = 0;
+            } else {
+                // fetch total liquidity of Bunni token's position
+                (liquidity,,,,) = pool.positions(keccak256(abi.encodePacked(bunniToken.hub(), tickLower, tickUpper)));
+
+                // compute liquidity per Bunni token
+                // liquidity is uint128, BASE uses 60 bits
+                // so liquidity * BASE can't overflow 256 bits
+                liquidity = uint128((liquidity * BASE) / existingShareSupply);
+            }
+        }
+
+        return _quoteUSD(
+            pool,
+            token0,
+            token1,
+            token0Base,
+            token1Base,
+            tickLower,
+            tickUpper,
+            liquidity,
+            uniV3OracleSecondsAgo,
+            chainlinkPriceMaxAgeSecs,
+            feed0,
+            feed1
+        );
+    }
+
     function _getPriceUSDFromFeed(AggregatorV2V3Interface feed, address token, uint256 chainlinkPriceMaxAgeSecs)
         internal
         view
@@ -253,13 +617,12 @@ contract UniV3LpOracle {
         // prices use 8 decimals
         int256 priceUSDInt;
         uint256 updatedAt;
-        try feed.latestRoundData() returns (uint80, int256 p, uint256, uint256 u, uint80) {
-            priceUSDInt = p;
-            updatedAt = u;
-        } catch {
-            // might be access controlled aggregator
-            // use FeedRegistry instead to bypass access control
+        if (address(chainlink) != address(0)) {
+            // FeedRegistry is available
             (, priceUSDInt,, updatedAt,) = chainlink.latestRoundData(_transformToken(token), Denominations.USD);
+        } else {
+            // FeedRegistry is not available
+            (, priceUSDInt,, updatedAt,) = feed.latestRoundData();
         }
 
         // revert if the result is stale
@@ -283,6 +646,26 @@ contract UniV3LpOracle {
             return Denominations.BTC;
         } else {
             return token;
+        }
+    }
+
+    function _getTokenBase(address token) internal view returns (uint256) {
+        // use hardcoded values for common tokens
+        // to save gas
+        if (token == WETH) {
+            return BASE;
+        } else if (token == USDC) {
+            return 1e6;
+        } else if (token == WBTC) {
+            return 1e8;
+        } else if (token == USDT) {
+            return 1e6;
+        } else if (token == DAI) {
+            return BASE;
+        } else if (token == FRAX) {
+            return BASE;
+        } else {
+            return 10 ** uint256(ERC20(token).decimals());
         }
     }
 }
