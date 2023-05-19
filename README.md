@@ -2,6 +2,10 @@
 
 Gas-optimized oracle that uses a combination of Chainlink price oracles and Uniswap V3 built-in TWAP oracles to compute the value of a Bunni token / Uniswap V3 liquidity position without being vulnerable to flashloan manipulation attacks.
 
+## Deployment address
+
+- Ethereum: [0xe50d791486956C6Ae8E75D7EF16030eD086d31BF](https://etherscan.io/address/0xe50d791486956C6Ae8E75D7EF16030eD086d31BF)
+
 ## Installation
 
 To install with [Foundry](https://github.com/gakonst/foundry):
