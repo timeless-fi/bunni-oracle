@@ -580,7 +580,7 @@ contract BunniOracle {
         {
             uint256 existingShareSupply = bunniToken.totalSupply();
             if (existingShareSupply == 0) {
-                liquidity = 0;
+                return 0;
             } else {
                 // fetch total liquidity of Bunni token's position
                 (liquidity,,,,) = pool.positions(keccak256(abi.encodePacked(bunniToken.hub(), tickLower, tickUpper)));
