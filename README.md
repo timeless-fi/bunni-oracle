@@ -1,6 +1,6 @@
 # BunniOracle
 
-Oracle that wses a combination of Chainlink price oracles and Uniswap V3 built-in TWAP oracles to compute the value of a Bunni token / Uniswap V3 liquidity position without being vulnerable to flashloan manipulation attacks.
+Gas-optimized oracle that uses a combination of Chainlink price oracles and Uniswap V3 built-in TWAP oracles to compute the value of a Bunni token / Uniswap V3 liquidity position without being vulnerable to flashloan manipulation attacks.
 
 ## Installation
 
@@ -29,7 +29,7 @@ forge build
 ### Testing
 
 ```
-forge test -f mainnet
+forge test -f mainnet -vvv
 ```
 
 ### Contract deployment
