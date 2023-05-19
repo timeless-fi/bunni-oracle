@@ -1,13 +1,13 @@
-# UniV3LpOracle
+# BunniOracle
 
-Uniswap V3 liquidity position price oracle that wses a combination of Chainlink price oracles and Uniswap V3 built-in TWAP oracles to compute the value of a Uniswap V3 liquidity position without being vulnerable to flashloan manipulation attacks.
+Oracle that wses a combination of Chainlink price oracles and Uniswap V3 built-in TWAP oracles to compute the value of a Bunni token / Uniswap V3 liquidity position without being vulnerable to flashloan manipulation attacks.
 
 ## Installation
 
 To install with [Foundry](https://github.com/gakonst/foundry):
 
 ```
-forge install timeless-fi/univ3-lp-oracle
+forge install timeless-fi/bunni-oracle
 ```
 
 ## Local development

@@ -18,12 +18,12 @@ import {LiquidityAmounts} from "@uniswap/v3-periphery/contracts/libraries/Liquid
 import {Denominations} from "./external/Denominations.sol";
 import {FeedRegistryInterface, AggregatorV2V3Interface} from "./external/FeedRegistryInterface.sol";
 
-/// @title Uniswap V3 liquidity position price oracle
+/// @title Price oracle for Bunni tokens and generalized Uniswap V3 positions
 /// @author zefram.eth
 /// @notice Uses a combination of Chainlink price oracles and Uniswap V3 built-in TWAP oracles
 /// to compute the value of a Uniswap V3 liquidity position without being vulnerable to flashloan
 /// manipulation attacks.
-contract UniV3LpOracle {
+contract BunniOracle {
     /// -----------------------------------------------------------------------
     /// Libraries usage
     /// -----------------------------------------------------------------------
@@ -58,8 +58,8 @@ contract UniV3LpOracle {
     /// Errors
     /// -----------------------------------------------------------------------
 
-    error UniV3LpOracle__ChainlinkPriceTooOld();
-    error UniV3LpOracle__NoChainlinkPriceAvailable();
+    error BunniOracle__ChainlinkPriceTooOld();
+    error BunniOracle__NoChainlinkPriceAvailable();
 
     /// -----------------------------------------------------------------------
     /// Constructor
@@ -545,7 +545,7 @@ contract UniV3LpOracle {
             } else {
                 // neither token has chainlink price
                 // cannot compute USD price in this case
-                revert UniV3LpOracle__NoChainlinkPriceAvailable();
+                revert BunniOracle__NoChainlinkPriceAvailable();
             }
         }
 
@@ -626,7 +626,7 @@ contract UniV3LpOracle {
         }
 
         // revert if the result is stale
-        if (block.timestamp - updatedAt > chainlinkPriceMaxAgeSecs) revert UniV3LpOracle__ChainlinkPriceTooOld();
+        if (block.timestamp - updatedAt > chainlinkPriceMaxAgeSecs) revert BunniOracle__ChainlinkPriceTooOld();
 
         return uint256(priceUSDInt);
     }

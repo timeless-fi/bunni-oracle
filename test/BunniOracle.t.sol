@@ -3,9 +3,9 @@ pragma solidity ^0.8.4;
 
 import "forge-std/Test.sol";
 
-import "../src/UniV3LpOracle.sol";
+import "../src/BunniOracle.sol";
 
-contract UniV3LpOracleTest is Test {
+contract BunniOracleTest is Test {
     FeedRegistryInterface immutable CHAINLINK = FeedRegistryInterface(vm.envAddress("CHAINLINK"));
     address immutable WETH = vm.envAddress("WETH");
     address immutable WBTC = vm.envAddress("WBTC");
@@ -13,10 +13,10 @@ contract UniV3LpOracleTest is Test {
     address immutable USDT = vm.envAddress("USDT");
     address immutable DAI = vm.envAddress("DAI");
     address immutable FRAX = vm.envAddress("FRAX");
-    UniV3LpOracle oracle;
+    BunniOracle oracle;
 
     function setUp() public {
-        oracle = new UniV3LpOracle(CHAINLINK, WETH, WBTC, USDC, USDT, DAI, FRAX);
+        oracle = new BunniOracle(CHAINLINK, WETH, WBTC, USDC, USDT, DAI, FRAX);
     }
 
     function test_quoteUSD_ETHBTC() public view {
