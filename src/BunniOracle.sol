@@ -3,8 +3,6 @@ pragma solidity ^0.8.4;
 
 import {IBunniToken} from "bunni/src/interfaces/IBunniToken.sol";
 
-import "forge-std/Test.sol";
-
 import {ERC20} from "solmate/tokens/ERC20.sol";
 import {SafeCastLib} from "solmate/utils/SafeCastLib.sol";
 import {FixedPointMathLib} from "solmate/utils/FixedPointMathLib.sol";
