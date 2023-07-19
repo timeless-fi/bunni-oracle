@@ -516,7 +516,7 @@ contract BunniOracle {
                 // fetch prices from chainlink
                 price0USD = _getPriceUSDFromFeed(feed0, token0, chainlinkPriceMaxAgeSecs);
                 price1USD = _getPriceUSDFromFeed(feed1, token1, chainlinkPriceMaxAgeSecs);
-            } else if (uint160(address(feed0)) | uint160(address(feed1)) == uint160(address(feed0))) {
+            } else if (address(feed0) != address(0)) {
                 // feed0 != 0, feed1 == 0
                 // token0 has chainlink price
 
@@ -528,7 +528,7 @@ contract BunniOracle {
                 uint256 quoteAmount =
                     OracleLibrary.getQuoteAtTick(arithmeticMeanTick, token1Base.safeCastTo128(), token1, token0); // price of token1 in token0
                 price1USD = quoteAmount.mulDivDown(price0USD, token0Base);
-            } else if (uint160(address(feed0)) | uint160(address(feed1)) == uint160(address(feed1))) {
+            } else if (address(feed1) != address(0)) {
                 // feed0 == 0, feed1 != 0
                 // token1 has chainlink price
 
