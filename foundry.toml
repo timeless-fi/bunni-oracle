@@ -6,6 +6,7 @@ remappings = [
   "@uniswap/v3-periphery/=lib/v3-periphery/",
 ]
 via_ir = true
+solc_version = "0.8.19"
 
 # Extreme Fuzzing CI Profile :P
 [profile.ci]
