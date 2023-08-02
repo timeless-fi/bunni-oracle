@@ -35,6 +35,7 @@ contract BunniOracle {
 
     uint256 internal constant PRICE_BASE = 1e8; // chainlink uses 8 decimals for prices
     uint256 internal constant BASE = 1e18; // result of quoteUSD uses 18 decimals
+    uint256 internal constant GRACE_PERIOD_TIME = 1 hours; // grace period after L2 sequencer downtime
 
     /// -----------------------------------------------------------------------
     /// Immutable args
@@ -44,6 +45,10 @@ contract BunniOracle {
     /// @dev Since the Feed Registry only exists on Ethereum, this value will be
     /// address(0) on non-Ethereum networks.
     FeedRegistryInterface public immutable chainlink;
+
+    /// @notice The Chainlink uptime feed for deployment on L2s (e.g. Arbitrum, Optimism)
+    /// @dev Is address(0) for non-L2 networks (e.g. Ethereum, Polygon)
+    AggregatorV2V3Interface public immutable sequencerUptimeFeed;
 
     address internal immutable WETH;
     address internal immutable WBTC;
@@ -56,6 +61,8 @@ contract BunniOracle {
     /// Errors
     /// -----------------------------------------------------------------------
 
+    error BunniOracle__SequencerDown();
+    error BunniOracle__GracePeriodNotOver();
     error BunniOracle__ChainlinkPriceTooOld();
     error BunniOracle__NoChainlinkPriceAvailable();
 
@@ -65,6 +72,7 @@ contract BunniOracle {
 
     constructor(
         FeedRegistryInterface chainlink_,
+        AggregatorV2V3Interface sequencerUptimeFeed_,
         address WETH_,
         address WBTC_,
         address USDC_,
@@ -73,6 +81,7 @@ contract BunniOracle {
         address FRAX_
     ) {
         chainlink = chainlink_;
+        sequencerUptimeFeed = sequencerUptimeFeed_;
         WETH = WETH_;
         WBTC = WBTC_;
         USDC = USDC_;
@@ -619,6 +628,24 @@ contract BunniOracle {
         view
         returns (uint256 priceUSD)
     {
+        // ensure the L2 sequencer is up if this is an L2 deployment
+        if (address(sequencerUptimeFeed) != address(0)) {
+            (, int256 answer, uint256 startedAt,,) = sequencerUptimeFeed.latestRoundData();
+
+            // Answer == 0: Sequencer is up
+            // Answer == 1: Sequencer is down
+            if (answer != 0) {
+                revert BunniOracle__SequencerDown();
+            }
+
+            // Make sure the grace period has passed after the
+            // sequencer is back up.
+            uint256 timeSinceUp = block.timestamp - startedAt;
+            if (timeSinceUp <= GRACE_PERIOD_TIME) {
+                revert BunniOracle__GracePeriodNotOver();
+            }
+        }
+
         // fetch USD price of tokens from chainlink
         // prices use 8 decimals
         int256 priceUSDInt;
