@@ -199,6 +199,8 @@ contract BunniOracle {
     /// @dev This function is meant for ease of use: the number of input parameters is minimized
     /// and we make external contract calls to obtain the token & price feed addresses. Used on non-Ethereum
     /// chains since there's no Feed Registry available.
+    /// If the Feed Registry is available and has a valid feed for a token, the feed from the registry will be used
+    /// instead of feed0/feed1.
     /// @param pool The Uniswap V3 pool
     /// @param tickLower The lower tick of the liquidity position
     /// @param tickUpper The upper tick of the liquidity position
@@ -248,6 +250,8 @@ contract BunniOracle {
     /// via external calls are instead input arguments. Used on non-Ethereum
     /// chains since there's no Feed Registry available. If the wrong values are given for input arguments, the result
     /// is undefined.
+    /// If the Feed Registry is available and has a valid feed for a token, the feed from the registry will be used
+    /// instead of feed0/feed1.
     /// @param pool The Uniswap V3 pool
     /// @param token0 token0 of the Uniswap pool
     /// @param token1 token1 of the Uniswap pool
@@ -402,6 +406,8 @@ contract BunniOracle {
     /// @dev This function is meant for ease of use: the number of input parameters is minimized
     /// and we make external contract calls to obtain the token & price feed addresses. Used on non-Ethereum
     /// chains since there's no Feed Registry available.
+    /// If the Feed Registry is available and has a valid feed for a token, the feed from the registry will be used
+    /// instead of feed0/feed1.
     /// @param bunniToken The Bunni LP token
     /// @param uniV3OracleSecondsAgo The size of the TWAP window used by the Uniswap V3 TWAP oracle in seconds.
     /// Ignored if both token0 and token1 have chainlink price feeds. The call reverts if the TWAP oracle
@@ -448,6 +454,8 @@ contract BunniOracle {
     /// via external calls are instead input arguments. Used on non-Ethereum
     /// chains since there's no Feed Registry available. If the wrong values are given for input arguments, the result
     /// is undefined.
+    /// If the Feed Registry is available and has a valid feed for a token, the feed from the registry will be used
+    /// instead of feed0/feed1.
     /// @param bunniToken The Bunni LP token
     /// @param uniV3OracleSecondsAgo The size of the TWAP window used by the Uniswap V3 TWAP oracle in seconds.
     /// Ignored if both token0 and token1 have chainlink price feeds. The call reverts if the TWAP oracle
