@@ -46,6 +46,20 @@ contract BunniOracleTest is Test {
         console.log("valueUSD", valueUSD);
     }
 
+    function test_quoteUSD_tBTCWBTC() public view {
+        uint256 valueUSD = oracle.quoteUSD(
+            IUniswapV3Pool(0xdBAc78BE00503d10ae0074e5E5873a61fc56647c),
+            -230630,
+            -230340,
+            716679363107741,
+            false,
+            true,
+            1800,
+            1 days
+        );
+        console.log("valueUSD", valueUSD);
+    }
+
     function test_bunniTokenPriceUSD_frxETHETH() public view {
         uint256 priceUSD = oracle.bunniTokenPriceUSD(
             IBunniToken(0xefFe49D9fCe8A4fC71Be42f7b2A83Bd353107Be3), false, true, 1800, 1 days
@@ -59,7 +73,7 @@ contract BunniOracleTest is Test {
         console.log("priceUSD", priceUSD);
     }
 
-    function _getEnvAddressForNetwork(string memory name) internal returns (address) {
+    function _getEnvAddressForNetwork(string memory name) internal view returns (address) {
         return vm.envAddress(string.concat(name, "_", block.chainid.toString()));
     }
 }

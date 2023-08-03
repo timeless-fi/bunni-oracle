@@ -33,7 +33,6 @@ contract BunniOracle {
     /// Constants
     /// -----------------------------------------------------------------------
 
-    uint256 internal constant PRICE_BASE = 1e8; // chainlink uses 8 decimals for prices
     uint256 internal constant BASE = 1e18; // result of quoteUSD uses 18 decimals
     uint256 internal constant GRACE_PERIOD_TIME = 1 hours; // grace period after L2 sequencer downtime
 
@@ -524,6 +523,8 @@ contract BunniOracle {
     ) internal view returns (uint256 valueUSD) {
         uint256 price0USD;
         uint256 price1USD;
+        uint256 decimals0; // num of decimals used by price0USD
+        uint256 decimals1; // num of decimals used by price1USD
 
         // handle different cases based on availability of chainlink price feed
         {
@@ -531,32 +532,32 @@ contract BunniOracle {
                 // both tokens have chainlink price
 
                 // fetch prices from chainlink
-                price0USD = _getPriceUSDFromFeed(feed0, token0, chainlinkPriceMaxAgeSecs);
-                price1USD = _getPriceUSDFromFeed(feed1, token1, chainlinkPriceMaxAgeSecs);
+                (price0USD, decimals0) = _getPriceUSDFromFeed(feed0, token0, chainlinkPriceMaxAgeSecs);
+                (price1USD, decimals1) = _getPriceUSDFromFeed(feed1, token1, chainlinkPriceMaxAgeSecs);
             } else if (address(feed0) != address(0)) {
                 // feed0 != 0, feed1 == 0
                 // token0 has chainlink price
 
                 // fetch prices from chainlink
-                price0USD = _getPriceUSDFromFeed(feed0, token0, chainlinkPriceMaxAgeSecs);
+                (price0USD, decimals0) = _getPriceUSDFromFeed(feed0, token0, chainlinkPriceMaxAgeSecs);
 
                 // compute price1USD using Uniswap v3 TWAP oracle
                 (int24 arithmeticMeanTick,) = OracleLibrary.consult(address(pool), uniV3OracleSecondsAgo);
                 uint256 quoteAmount =
                     OracleLibrary.getQuoteAtTick(arithmeticMeanTick, token1Base.safeCastTo128(), token1, token0); // price of token1 in token0
-                price1USD = quoteAmount.mulDivDown(price0USD, token0Base);
+                (price1USD, decimals1) = (quoteAmount.mulDivDown(price0USD, token0Base), decimals0);
             } else if (address(feed1) != address(0)) {
                 // feed0 == 0, feed1 != 0
                 // token1 has chainlink price
 
                 // fetch prices from chainlink
-                price1USD = _getPriceUSDFromFeed(feed1, token1, chainlinkPriceMaxAgeSecs);
+                (price1USD, decimals1) = _getPriceUSDFromFeed(feed1, token1, chainlinkPriceMaxAgeSecs);
 
                 // compute price0USD using Uniswap v3 TWAP oracle
                 (int24 arithmeticMeanTick,) = OracleLibrary.consult(address(pool), uniV3OracleSecondsAgo);
                 uint256 quoteAmount =
                     OracleLibrary.getQuoteAtTick(arithmeticMeanTick, token0Base.safeCastTo128(), token0, token1); // price of token0 in token1
-                price0USD = quoteAmount.mulDivDown(price1USD, token1Base);
+                (price0USD, decimals0) = (quoteAmount.mulDivDown(price1USD, token1Base), decimals1);
             } else {
                 // neither token has chainlink price
                 // cannot compute USD price in this case
@@ -566,15 +567,15 @@ contract BunniOracle {
 
         // use token prices to compute sqrtRatioX96 and then compute token amounts for liquidity
         (uint256 amount0, uint256 amount1) = LiquidityAmounts.getAmountsForLiquidity(
-            _getSqrtRatioX96(price0USD, price1USD),
+            _getSqrtRatioX96(price0USD, price1USD, decimals0, decimals1, token0Base, token1Base),
             TickMath.getSqrtRatioAtTick(tickLower),
             TickMath.getSqrtRatioAtTick(tickUpper),
             liquidity
         );
 
         // add up position value of both tokens
-        valueUSD = amount0.mulDivDown(price0USD, PRICE_BASE).mulDivDown(BASE, token0Base)
-            + amount1.mulDivDown(price1USD, PRICE_BASE).mulDivDown(BASE, token1Base);
+        valueUSD = amount0.mulDivDown(price0USD, 10 ** decimals0).mulDivDown(BASE, token0Base)
+            + amount1.mulDivDown(price1USD, 10 ** decimals1).mulDivDown(BASE, token1Base);
     }
 
     function _bunniTokenPriceUSD(
@@ -626,7 +627,7 @@ contract BunniOracle {
     function _getPriceUSDFromFeed(AggregatorV2V3Interface feed, address token, uint256 chainlinkPriceMaxAgeSecs)
         internal
         view
-        returns (uint256 priceUSD)
+        returns (uint256 priceUSD, uint256 decimals)
     {
         // ensure the L2 sequencer is up if this is an L2 deployment
         if (address(sequencerUptimeFeed) != address(0)) {
@@ -653,22 +654,44 @@ contract BunniOracle {
         if (address(chainlink) != address(0)) {
             // FeedRegistry is available
             (, priceUSDInt,, updatedAt,) = chainlink.latestRoundData(_transformToken(token), Denominations.USD);
+            if (token == WETH || token == USDC || token == WBTC || token == USDT || token == DAI || token == FRAX) {
+                decimals = 8;
+            } else {
+                decimals = chainlink.decimals(_transformToken(token), Denominations.USD);
+            }
         } else {
             // FeedRegistry is not available
             (, priceUSDInt,, updatedAt,) = feed.latestRoundData();
+            if (token == WETH || token == USDC || token == WBTC || token == USDT || token == DAI || token == FRAX) {
+                decimals = 8;
+            } else {
+                decimals = feed.decimals();
+            }
         }
 
         // revert if the result is stale
         if (block.timestamp - updatedAt > chainlinkPriceMaxAgeSecs) revert BunniOracle__ChainlinkPriceTooOld();
 
-        return uint256(priceUSDInt);
+        // set return priceUSD value
+        priceUSD = uint256(priceUSDInt);
     }
 
-    function _getSqrtRatioX96(uint256 price0USD, uint256 price1USD) internal pure returns (uint160) {
+    function _getSqrtRatioX96(
+        uint256 price0USD,
+        uint256 price1USD,
+        uint256 decimals0,
+        uint256 decimals1,
+        uint256 token0Base,
+        uint256 token1Base
+    ) internal pure returns (uint160) {
+        // Note: amount1 and amount0 may have different decimals which needs to be accounted for via token0Base and token1Base
         // sqrtRatioX96 = sqrt(amount1 / amount0) * 2**96
-        //              = sqrt(price0USD / price1USD) * 2**96
-        //              = sqrt(price0USD * 2**96 / price1USD) * 2**48
-        return (((price0USD << 96) / price1USD).sqrt() << 48).safeCastTo160();
+        //              = sqrt((price0USD * 10**decimals1 * token1Base) / (price1USD * 10**decimals0 * token0Base)) * 2**96
+        //              = sqrt((price0USD * 10**decimals1 * token1Base * 2**96) / (price1USD * 10**decimals0 * token0Base)) * 2**48
+        return (
+            (((price0USD * 10 ** decimals1 * token1Base) << 96) / (price1USD * 10 ** decimals0 * token0Base)).sqrt()
+                << 48
+        ).safeCastTo160();
     }
 
     function _transformToken(address token) internal view returns (address) {
