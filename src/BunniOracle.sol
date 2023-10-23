@@ -3,8 +3,6 @@ pragma solidity ^0.8.4;
 
 import {IBunniToken} from "bunni/src/interfaces/IBunniToken.sol";
 
-import "forge-std/Test.sol";
-
 import {ERC20} from "solmate/tokens/ERC20.sol";
 import {SafeCastLib} from "solmate/utils/SafeCastLib.sol";
 import {FixedPointMathLib} from "solmate/utils/FixedPointMathLib.sol";
@@ -35,8 +33,8 @@ contract BunniOracle {
     /// Constants
     /// -----------------------------------------------------------------------
 
-    uint256 internal constant PRICE_BASE = 1e8; // chainlink uses 8 decimals for prices
     uint256 internal constant BASE = 1e18; // result of quoteUSD uses 18 decimals
+    uint256 internal constant GRACE_PERIOD_TIME = 1 hours; // grace period after L2 sequencer downtime
 
     /// -----------------------------------------------------------------------
     /// Immutable args
@@ -46,6 +44,10 @@ contract BunniOracle {
     /// @dev Since the Feed Registry only exists on Ethereum, this value will be
     /// address(0) on non-Ethereum networks.
     FeedRegistryInterface public immutable chainlink;
+
+    /// @notice The Chainlink uptime feed for deployment on L2s (e.g. Arbitrum, Optimism)
+    /// @dev Is address(0) for non-L2 networks (e.g. Ethereum, Polygon)
+    AggregatorV2V3Interface public immutable sequencerUptimeFeed;
 
     address internal immutable WETH;
     address internal immutable WBTC;
@@ -58,6 +60,8 @@ contract BunniOracle {
     /// Errors
     /// -----------------------------------------------------------------------
 
+    error BunniOracle__SequencerDown();
+    error BunniOracle__GracePeriodNotOver();
     error BunniOracle__ChainlinkPriceTooOld();
     error BunniOracle__NoChainlinkPriceAvailable();
 
@@ -67,6 +71,7 @@ contract BunniOracle {
 
     constructor(
         FeedRegistryInterface chainlink_,
+        AggregatorV2V3Interface sequencerUptimeFeed_,
         address WETH_,
         address WBTC_,
         address USDC_,
@@ -75,6 +80,7 @@ contract BunniOracle {
         address FRAX_
     ) {
         chainlink = chainlink_;
+        sequencerUptimeFeed = sequencerUptimeFeed_;
         WETH = WETH_;
         WBTC = WBTC_;
         USDC = USDC_;
@@ -201,6 +207,8 @@ contract BunniOracle {
     /// @dev This function is meant for ease of use: the number of input parameters is minimized
     /// and we make external contract calls to obtain the token & price feed addresses. Used on non-Ethereum
     /// chains since there's no Feed Registry available.
+    /// If the Feed Registry is available and has a valid feed for a token, the feed from the registry will be used
+    /// instead of feed0/feed1.
     /// @param pool The Uniswap V3 pool
     /// @param tickLower The lower tick of the liquidity position
     /// @param tickUpper The upper tick of the liquidity position
@@ -250,6 +258,8 @@ contract BunniOracle {
     /// via external calls are instead input arguments. Used on non-Ethereum
     /// chains since there's no Feed Registry available. If the wrong values are given for input arguments, the result
     /// is undefined.
+    /// If the Feed Registry is available and has a valid feed for a token, the feed from the registry will be used
+    /// instead of feed0/feed1.
     /// @param pool The Uniswap V3 pool
     /// @param token0 token0 of the Uniswap pool
     /// @param token1 token1 of the Uniswap pool
@@ -404,6 +414,8 @@ contract BunniOracle {
     /// @dev This function is meant for ease of use: the number of input parameters is minimized
     /// and we make external contract calls to obtain the token & price feed addresses. Used on non-Ethereum
     /// chains since there's no Feed Registry available.
+    /// If the Feed Registry is available and has a valid feed for a token, the feed from the registry will be used
+    /// instead of feed0/feed1.
     /// @param bunniToken The Bunni LP token
     /// @param uniV3OracleSecondsAgo The size of the TWAP window used by the Uniswap V3 TWAP oracle in seconds.
     /// Ignored if both token0 and token1 have chainlink price feeds. The call reverts if the TWAP oracle
@@ -450,6 +462,8 @@ contract BunniOracle {
     /// via external calls are instead input arguments. Used on non-Ethereum
     /// chains since there's no Feed Registry available. If the wrong values are given for input arguments, the result
     /// is undefined.
+    /// If the Feed Registry is available and has a valid feed for a token, the feed from the registry will be used
+    /// instead of feed0/feed1.
     /// @param bunniToken The Bunni LP token
     /// @param uniV3OracleSecondsAgo The size of the TWAP window used by the Uniswap V3 TWAP oracle in seconds.
     /// Ignored if both token0 and token1 have chainlink price feeds. The call reverts if the TWAP oracle
@@ -509,6 +523,8 @@ contract BunniOracle {
     ) internal view returns (uint256 valueUSD) {
         uint256 price0USD;
         uint256 price1USD;
+        uint256 decimals0; // num of decimals used by price0USD
+        uint256 decimals1; // num of decimals used by price1USD
 
         // handle different cases based on availability of chainlink price feed
         {
@@ -516,32 +532,32 @@ contract BunniOracle {
                 // both tokens have chainlink price
 
                 // fetch prices from chainlink
-                price0USD = _getPriceUSDFromFeed(feed0, token0, chainlinkPriceMaxAgeSecs);
-                price1USD = _getPriceUSDFromFeed(feed1, token1, chainlinkPriceMaxAgeSecs);
-            } else if (uint160(address(feed0)) | uint160(address(feed1)) == uint160(address(feed0))) {
+                (price0USD, decimals0) = _getPriceUSDFromFeed(feed0, token0, chainlinkPriceMaxAgeSecs);
+                (price1USD, decimals1) = _getPriceUSDFromFeed(feed1, token1, chainlinkPriceMaxAgeSecs);
+            } else if (address(feed0) != address(0)) {
                 // feed0 != 0, feed1 == 0
                 // token0 has chainlink price
 
                 // fetch prices from chainlink
-                price0USD = _getPriceUSDFromFeed(feed0, token0, chainlinkPriceMaxAgeSecs);
+                (price0USD, decimals0) = _getPriceUSDFromFeed(feed0, token0, chainlinkPriceMaxAgeSecs);
 
                 // compute price1USD using Uniswap v3 TWAP oracle
                 (int24 arithmeticMeanTick,) = OracleLibrary.consult(address(pool), uniV3OracleSecondsAgo);
                 uint256 quoteAmount =
                     OracleLibrary.getQuoteAtTick(arithmeticMeanTick, token1Base.safeCastTo128(), token1, token0); // price of token1 in token0
-                price1USD = quoteAmount.mulDivDown(price0USD, token0Base);
-            } else if (uint160(address(feed0)) | uint160(address(feed1)) == uint160(address(feed1))) {
+                (price1USD, decimals1) = (quoteAmount.mulDivDown(price0USD, token0Base), decimals0);
+            } else if (address(feed1) != address(0)) {
                 // feed0 == 0, feed1 != 0
                 // token1 has chainlink price
 
                 // fetch prices from chainlink
-                price1USD = _getPriceUSDFromFeed(feed1, token1, chainlinkPriceMaxAgeSecs);
+                (price1USD, decimals1) = _getPriceUSDFromFeed(feed1, token1, chainlinkPriceMaxAgeSecs);
 
                 // compute price0USD using Uniswap v3 TWAP oracle
                 (int24 arithmeticMeanTick,) = OracleLibrary.consult(address(pool), uniV3OracleSecondsAgo);
                 uint256 quoteAmount =
                     OracleLibrary.getQuoteAtTick(arithmeticMeanTick, token0Base.safeCastTo128(), token0, token1); // price of token0 in token1
-                price0USD = quoteAmount.mulDivDown(price1USD, token1Base);
+                (price0USD, decimals0) = (quoteAmount.mulDivDown(price1USD, token1Base), decimals1);
             } else {
                 // neither token has chainlink price
                 // cannot compute USD price in this case
@@ -551,15 +567,15 @@ contract BunniOracle {
 
         // use token prices to compute sqrtRatioX96 and then compute token amounts for liquidity
         (uint256 amount0, uint256 amount1) = LiquidityAmounts.getAmountsForLiquidity(
-            _getSqrtRatioX96(price0USD, price1USD),
+            _getSqrtRatioX96(price0USD, price1USD, decimals0, decimals1, token0Base, token1Base),
             TickMath.getSqrtRatioAtTick(tickLower),
             TickMath.getSqrtRatioAtTick(tickUpper),
             liquidity
         );
 
         // add up position value of both tokens
-        valueUSD = amount0.mulDivDown(price0USD, PRICE_BASE).mulDivDown(BASE, token0Base)
-            + amount1.mulDivDown(price1USD, PRICE_BASE).mulDivDown(BASE, token1Base);
+        valueUSD = amount0.mulDivDown(price0USD, 10 ** decimals0).mulDivDown(BASE, token0Base)
+            + amount1.mulDivDown(price1USD, 10 ** decimals1).mulDivDown(BASE, token1Base);
     }
 
     function _bunniTokenPriceUSD(
@@ -611,8 +627,26 @@ contract BunniOracle {
     function _getPriceUSDFromFeed(AggregatorV2V3Interface feed, address token, uint256 chainlinkPriceMaxAgeSecs)
         internal
         view
-        returns (uint256 priceUSD)
+        returns (uint256 priceUSD, uint256 decimals)
     {
+        // ensure the L2 sequencer is up if this is an L2 deployment
+        if (address(sequencerUptimeFeed) != address(0)) {
+            (, int256 answer, uint256 startedAt,,) = sequencerUptimeFeed.latestRoundData();
+
+            // Answer == 0: Sequencer is up
+            // Answer == 1: Sequencer is down
+            if (answer != 0) {
+                revert BunniOracle__SequencerDown();
+            }
+
+            // Make sure the grace period has passed after the
+            // sequencer is back up.
+            uint256 timeSinceUp = block.timestamp - startedAt;
+            if (timeSinceUp <= GRACE_PERIOD_TIME) {
+                revert BunniOracle__GracePeriodNotOver();
+            }
+        }
+
         // fetch USD price of tokens from chainlink
         // prices use 8 decimals
         int256 priceUSDInt;
@@ -620,22 +654,44 @@ contract BunniOracle {
         if (address(chainlink) != address(0)) {
             // FeedRegistry is available
             (, priceUSDInt,, updatedAt,) = chainlink.latestRoundData(_transformToken(token), Denominations.USD);
+            if (token == WETH || token == USDC || token == WBTC || token == USDT || token == DAI || token == FRAX) {
+                decimals = 8;
+            } else {
+                decimals = chainlink.decimals(_transformToken(token), Denominations.USD);
+            }
         } else {
             // FeedRegistry is not available
             (, priceUSDInt,, updatedAt,) = feed.latestRoundData();
+            if (token == WETH || token == USDC || token == WBTC || token == USDT || token == DAI || token == FRAX) {
+                decimals = 8;
+            } else {
+                decimals = feed.decimals();
+            }
         }
 
         // revert if the result is stale
         if (block.timestamp - updatedAt > chainlinkPriceMaxAgeSecs) revert BunniOracle__ChainlinkPriceTooOld();
 
-        return uint256(priceUSDInt);
+        // set return priceUSD value
+        priceUSD = uint256(priceUSDInt);
     }
 
-    function _getSqrtRatioX96(uint256 price0USD, uint256 price1USD) internal pure returns (uint160) {
+    function _getSqrtRatioX96(
+        uint256 price0USD,
+        uint256 price1USD,
+        uint256 decimals0,
+        uint256 decimals1,
+        uint256 token0Base,
+        uint256 token1Base
+    ) internal pure returns (uint160) {
+        // Note: amount1 and amount0 may have different decimals which needs to be accounted for via token0Base and token1Base
         // sqrtRatioX96 = sqrt(amount1 / amount0) * 2**96
-        //              = sqrt(price0USD / price1USD) * 2**96
-        //              = sqrt(price0USD * 2**96 / price1USD) * 2**48
-        return (((price0USD << 96) / price1USD).sqrt() << 48).safeCastTo160();
+        //              = sqrt((price0USD * 10**decimals1 * token1Base) / (price1USD * 10**decimals0 * token0Base)) * 2**96
+        //              = sqrt((price0USD * 10**decimals1 * token1Base * 2**96) / (price1USD * 10**decimals0 * token0Base)) * 2**48
+        return (
+            (((price0USD * 10 ** decimals1 * token1Base) << 96) / (price1USD * 10 ** decimals0 * token0Base)).sqrt()
+                << 48
+        ).safeCastTo160();
     }
 
     function _transformToken(address token) internal view returns (address) {

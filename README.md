@@ -4,7 +4,10 @@ Gas-optimized oracle that uses a combination of Chainlink price oracles and Unis
 
 ## Deployment address
 
-- Ethereum: [0xe50d791486956C6Ae8E75D7EF16030eD086d31BF](https://etherscan.io/address/0xe50d791486956C6Ae8E75D7EF16030eD086d31BF)
+BunniOracle is deployed to `0xEBe234F2A6ba1080f6620Ac340017a4cbB44c41F` on all of the following networks:
+
+- Ethereum Mainnet
+- Arbitrum Mainnet
 
 ## Installation
 
